@@ -1,0 +1,20 @@
+{
+  "name": "visual-regression-test",
+  "version": "1.0.0",
+  "description": "A minimal npm project with BackstopJS for visual regression testing",
+  "main": "index.js",
+  "scripts": {
+    "test": "backstop test",
+    "reference": "backstop reference",
+    "backstop:local": "node scripts/backstop-local.js"
+  },
+  "keywords": [
+    "visual-regression",
+    "testing",
+    "backstopjs"
+  ],
+  "author": "",
+  "devDependencies": {
+    "backstopjs": "^6.2.2"
+  }
+}

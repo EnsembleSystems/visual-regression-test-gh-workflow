@@ -1,0 +1,778 @@
+# .github/workflows/visual-regression-multi-job.yml
+name: Visual Regression Testing (Multi-Job)
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+  # Allow manual triggers
+  workflow_dispatch:
+    inputs:
+      test_branch:
+        description: "Branch to test (run `git branch -a` to see available branches)"
+        required: true
+        type: string
+      reference_branch:
+        description: "Target/reference branch (usually main, stage, or dev)"
+        required: true
+        type: string
+        default: "main"
+      pull_request_number:
+        description: "Pull request number"
+        required: false
+        type: string
+
+permissions:
+  contents: read # Checkout code
+  issues: write # Comment on PRs
+  statuses: write # Set commit status
+  actions: read # Download artifacts
+  pull-requests: write # Update PR status
+
+jobs:
+  setup-and-validate:
+    runs-on: ubuntu-latest
+    outputs:
+      test_branch: ${{ steps.branch_info.outputs.test_branch }}
+      reference_branch: ${{ steps.branch_info.outputs.reference_branch }}
+      pr_number: ${{ steps.branch_info.outputs.pr_number }}
+      validation_passed: ${{ steps.validation.outputs.passed }}
+
+    steps:
+      - name: Debug github event context
+        run: |
+          echo "github.event_name: ${{ github.event_name }}"
+          echo "github.event.number: ${{ github.event.number }}"
+          echo "github.event.pull_request.number: ${{ github.event.pull_request.number }}"
+          echo "github.event.pull_request.head.ref: ${{ github.event.pull_request.head.ref }}"
+          echo "github.event.pull_request.base.ref: ${{ github.event.pull_request.base.ref }}"
+          cat << 'EOF'
+          Full context: ${{ toJSON(github) }}
+          EOF
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate branch inputs
+        id: validation
+        if: github.event_name == 'workflow_dispatch' && inputs.pull_request_number == ''
+        run: |
+          # Fetch all branches to validate against
+          git fetch --all
+
+          # Check if test_branch exists
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${{ inputs.test_branch }}"; then
+            echo "::error::Branch '${{ inputs.test_branch }}' does not exist in the repository"
+            echo "Available branches:"
+            git branch -a | grep -v HEAD | sed 's/.*origin\///' | sort | uniq
+            exit 1
+          fi
+
+          # Check if reference_branch exists  
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${{ inputs.reference_branch }}"; then
+            echo "::error::Branch '${{ inputs.reference_branch }}' does not exist in the repository"
+            echo "Available branches:"
+            git branch -a | grep -v HEAD | sed 's/.*origin\///' | sort | uniq
+            exit 1
+          fi
+
+          echo "✅ Both branches exist and are valid"
+          echo "passed=true" >> $GITHUB_OUTPUT
+
+      - name: Validate pull request number
+        if: github.event_name == 'workflow_dispatch' && inputs.pull_request_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Validate that the PR number exists and is valid
+          PR_NUMBER="${{ inputs.pull_request_number }}"
+
+          # Check if PR number is a valid integer
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Pull request number '$PR_NUMBER' is not a valid integer"
+            exit 1
+          fi
+
+          # Check if the PR exists using GitHub CLI
+          if ! gh pr view "$PR_NUMBER" --json number,state,headRefName,baseRefName >/dev/null 2>&1; then
+            echo "::error::Pull request #$PR_NUMBER does not exist or is not accessible"
+            echo "Please check that the PR number is correct and that you have access to it"
+            exit 1
+          fi
+
+          # Get PR details for validation
+          PR_INFO=$(gh pr view "$PR_NUMBER" --json number,state,headRefName,baseRefName)
+          PR_STATE=$(echo "$PR_INFO" | jq -r '.state')
+          HEAD_BRANCH=$(echo "$PR_INFO" | jq -r '.headRefName')
+          BASE_BRANCH=$(echo "$PR_INFO" | jq -r '.baseRefName')
+
+          echo "✅ Pull request #$PR_NUMBER is valid"
+          echo "   State: $PR_STATE"
+          echo "   Head branch: $HEAD_BRANCH" 
+          echo "   Base branch: $BASE_BRANCH"
+
+          # Optional: warn if PR is closed (but don't fail)
+          if [ "$PR_STATE" = "CLOSED" ]; then
+            echo "::warning::Pull request #$PR_NUMBER is closed. Visual regression tests will still run."
+          elif [ "$PR_STATE" = "MERGED" ]; then
+            echo "::warning::Pull request #$PR_NUMBER is already merged. Visual regression tests will still run."
+          fi
+
+      - name: Extract branch information
+        id: branch_info
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the current branch name and target branch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Check if pull_request_number is provided - if so, fetch PR details
+            if [ "${{ inputs.pull_request_number }}" != "" ]; then
+              echo "Fetching PR details for PR #${{ inputs.pull_request_number }}"
+              
+              # Use GitHub CLI to get PR information
+              PR_INFO=$(gh pr view "${{ inputs.pull_request_number }}" --json headRefName,baseRefName)
+              BRANCH_NAME=$(echo "$PR_INFO" | jq -r '.headRefName')
+              TARGET_BRANCH=$(echo "$PR_INFO" | jq -r '.baseRefName')
+              PR_NUMBER="${{ inputs.pull_request_number }}"
+              
+              echo "Retrieved from PR: head branch=$BRANCH_NAME, base branch=$TARGET_BRANCH"
+            else
+              # Use manual inputs if no PR number provided
+              BRANCH_NAME="${{ inputs.test_branch }}"
+              TARGET_BRANCH="${{ inputs.reference_branch }}"
+              PR_NUMBER=""
+            fi
+          else
+            # For actual PR events, use the event data
+            BRANCH_NAME="${{ github.head_ref || github.ref_name }}"
+            TARGET_BRANCH="${{ github.base_ref || 'main' }}"
+            PR_NUMBER="${{ github.event.number }}"
+          fi
+          echo "Current branch: $BRANCH_NAME"
+          echo "Target branch: $TARGET_BRANCH"
+          echo "PR number: $PR_NUMBER"
+
+          # Set outputs for use in other jobs
+          echo "test_branch=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "reference_branch=${TARGET_BRANCH}" >> $GITHUB_OUTPUT
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+
+  prepare-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      cache_key: ${{ steps.cache_info.outputs.cache_key }}
+      cache_hit: ${{ steps.node-modules-cache.outputs.cache-hit }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/ms-playwright
+            node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+
+      - name: Install dependencies & Playwright browsers
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci --ignore-scripts && npm run postinstall
+
+      - name: Set cache info
+        id: cache_info
+        run: |
+          echo "cache_key=${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}" >> $GITHUB_OUTPUT
+
+  prepare-test-config:
+    runs-on: ubuntu-latest
+    needs: [setup-and-validate, prepare-environment]
+    outputs:
+      config_ready: ${{ steps.config_status.outputs.ready }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/ms-playwright
+            node_modules
+          key: ${{ needs.prepare-environment.outputs.cache_key }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+
+      - name: Download reference screenshots from main
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: visual-regression-reference.yml
+          branch: main
+          name: backstop-reference
+          path: backstop_data/bitmaps_reference/
+          if_no_artifact_found: warn
+
+      - name: Update staging references to branch name
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Use branch info from setup job
+          BRANCH_NAME="${{ needs.setup-and-validate.outputs.test_branch }}"
+          TARGET_BRANCH="${{ needs.setup-and-validate.outputs.reference_branch }}"
+
+          # Update backstop.json with branch-specific URLs
+          sed "s/stage--/${BRANCH_NAME}--/g" backstop.json | sed "s/main--/${TARGET_BRANCH}--/g" > backstop_temp.json
+          mv backstop_temp.json backstop.json
+
+          # Update cookies.json with branch-specific URLs
+          if [ -f "backstop_data/engine_scripts/cookies.json" ]; then
+            sed "s/stage--/${BRANCH_NAME}--/g" backstop_data/engine_scripts/cookies.json | sed "s/main--/${TARGET_BRANCH}--/g" > cookies_temp.json
+            mv cookies_temp.json backstop_data/engine_scripts/cookies.json
+            echo "Updated cookies.json URLs to use branch: $BRANCH_NAME and target: $TARGET_BRANCH"
+          fi
+
+          echo "Updated configuration files to use branch: $BRANCH_NAME and target: $TARGET_BRANCH"
+
+      - name: Parse PR body for additional URL pairs
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && needs.setup-and-validate.outputs.pr_number != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get PR body based on trigger type
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_BODY="${{ github.event.pull_request.body }}"
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ needs.setup-and-validate.outputs.pr_number }}" != "" ]; then
+            echo "Fetching PR body for PR #${{ needs.setup-and-validate.outputs.pr_number }}"
+            PR_BODY=$(gh pr view "${{ needs.setup-and-validate.outputs.pr_number }}" --json body --jq '.body')
+          else
+            PR_BODY=""
+          fi
+
+          # Parse PR body and update backstop.json if URL pairs are found
+          if [ -n "$PR_BODY" ]; then
+            echo "Parsing PR body for before/after URL pairs..."
+            export PR_BODY
+            node scripts/parse-pr-urls.js
+          else
+            echo "No PR body found, skipping URL pair parsing"
+          fi
+
+      - name: Create reference if none exists
+        run: |
+          if [ ! -d "backstop_data/bitmaps_reference" ] || [ -z "$(ls -A backstop_data/bitmaps_reference)" ]; then
+            echo "No reference screenshots found, creating initial reference..."
+            npm run backstop:reference
+          fi
+
+      - name: Upload test configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-config-${{ github.run_id }}
+          path: |
+            backstop.json
+            backstop_data/
+          retention-days: 1
+
+      - name: Set config status
+        id: config_status
+        run: |
+          echo "ready=true" >> $GITHUB_OUTPUT
+
+  run-visual-tests:
+    runs-on: ubuntu-latest
+    needs: [setup-and-validate, prepare-environment, prepare-test-config]
+    outputs:
+      backstop_exit_code: ${{ steps.visual_test.outputs.backstop_exit_code }}
+      test_outcome: ${{ steps.visual_test.outcome }}
+      failures: ${{ steps.parse_results.outputs.failures }}
+      total: ${{ steps.parse_results.outputs.total }}
+      status: ${{ steps.parse_results.outputs.status }}
+      summary: ${{ steps.parse_results.outputs.summary }}
+      total_tests: ${{ steps.parse_json_results.outputs.total_tests }}
+      passed_tests: ${{ steps.parse_json_results.outputs.passed_tests }}
+      failed_tests: ${{ steps.parse_json_results.outputs.failed_tests }}
+      label_breakdown: ${{ steps.parse_json_results.outputs.label_breakdown }}
+      viewport_breakdown: ${{ steps.parse_json_results.outputs.viewport_breakdown }}
+      failed_details: ${{ steps.parse_json_results.outputs.failed_details }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/ms-playwright
+            node_modules
+          key: ${{ needs.prepare-environment.outputs.cache_key }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+
+      - name: Download test configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: test-config-${{ github.run_id }}
+
+      - name: Run visual regression tests
+        id: visual_test
+        run: |
+          set +e  # Don't exit on failure
+          npm run backstop:test
+          echo "backstop_exit_code=$?" >> $GITHUB_OUTPUT
+          set -e
+        continue-on-error: true
+
+      - name: Parse test results
+        id: parse_results
+        run: |
+          # Parse BackstopJS xunit report
+          if [ -f "backstop_data/ci_report/xunit.xml" ]; then
+            # Count both failure and error elements as failures
+            failures=$(grep -c '<failure\|<error' backstop_data/ci_report/xunit.xml || echo "0")
+            # Get total from testsuites element (top-level element only)
+            total=$(grep '<testsuites' backstop_data/ci_report/xunit.xml | grep -o 'tests="[0-9]*"' | head -1 | grep -o '[0-9]*' || echo "0")
+            
+            # Ensure we have clean integer values
+            failures=$(echo "${failures}" | tr -d '\n' | head -c 10)
+            total=$(echo "${total}" | tr -d '\n' | head -c 10)
+            
+            # Default to 0 if empty
+            failures=${failures:-0}
+            total=${total:-0}
+          else
+            failures=0
+            total=0
+          fi
+
+          echo "failures=${failures}" >> $GITHUB_OUTPUT
+          echo "total=${total}" >> $GITHUB_OUTPUT
+
+          # Create summary with proper integer comparison
+          if [ "${failures}" -gt 0 ] 2>/dev/null; then
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "summary=❌ ${failures} of ${total} visual tests failed" >> $GITHUB_OUTPUT
+          else
+            echo "status=passed" >> $GITHUB_OUTPUT
+            echo "summary=✅ All ${total} visual tests passed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Parse JSON report for detailed summary
+        id: parse_json_results
+        run: |
+          # Parse JSON report for detailed breakdown
+          if [ -f "backstop_data/json_report/jsonReport.json" ]; then
+            # Use basic jq parsing if available, otherwise skip detailed parsing
+            if command -v jq >/dev/null 2>&1; then
+              total_tests=$(jq '.tests | length' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "0")
+              passed_tests=$(jq '.tests | map(select(.status == "pass")) | length' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "0")
+              failed_tests=$(jq '.tests | map(select(.status == "fail")) | length' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "0")
+              
+              # Create breakdown by page/URL
+              label_breakdown=$(jq -r '.tests | group_by(.pair.label) | map("\(.[-1].pair.label): \(map(select(.status == "pass")) | length) passed, \(map(select(.status == "fail")) | length) failed") | join("\n")' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "")
+              
+              # Create breakdown by viewport
+              viewport_breakdown=$(jq -r '.tests | group_by(.pair.viewportLabel) | map("\(.[-1].pair.viewportLabel): \(map(select(.status == "pass")) | length) passed, \(map(select(.status == "fail")) | length) failed") | join("\n")' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "")
+              
+              # Get failed test details
+              failed_details=$(jq -r '.tests | map(select(.status == "fail")) | map("- **\(.pair.label)** (\(.pair.viewportLabel)): \(if .pair.diff then .pair.diff.misMatchPercentage else "N/A" end)% difference") | join("\n")' backstop_data/json_report/jsonReport.json 2>/dev/null || echo "")
+            else
+              total_tests="0"
+              passed_tests="0"
+              failed_tests="0"
+              label_breakdown="jq not available - install jq for detailed breakdown"
+              viewport_breakdown="jq not available - install jq for detailed breakdown"  
+              failed_details="jq not available - check artifacts for detailed results"
+            fi
+          else
+            echo "No JSON report found, using basic results"
+            total_tests="0"
+            passed_tests="0" 
+            failed_tests="0"
+            label_breakdown=""
+            viewport_breakdown=""
+            failed_details=""
+          fi
+
+          # Set outputs with multiline support
+          echo "total_tests=${total_tests}" >> $GITHUB_OUTPUT
+          echo "passed_tests=${passed_tests}" >> $GITHUB_OUTPUT
+          echo "failed_tests=${failed_tests}" >> $GITHUB_OUTPUT
+          echo "label_breakdown<<EOF" >> $GITHUB_OUTPUT
+          echo "${label_breakdown}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "viewport_breakdown<<EOF" >> $GITHUB_OUTPUT
+          echo "${viewport_breakdown}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "failed_details<<EOF" >> $GITHUB_OUTPUT
+          echo "${failed_details}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ github.run_id }}
+          path: backstop_data/
+          retention-days: 1
+
+  generate-reports:
+    runs-on: ubuntu-latest
+    needs: [setup-and-validate, run-visual-tests]
+    if: always() && needs.run-visual-tests.result != 'skipped'
+    outputs:
+      artifacts_uploaded: ${{ steps.upload_status.outputs.completed }}
+
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: backstop_data/
+
+      - name: Generate workflow summary
+        if: always()
+        run: |
+          # Generate summary for GitHub workflow
+          echo "# 🎨 Visual Regression Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Add branch information if available
+          test_branch="${{ needs.setup-and-validate.outputs.test_branch }}"
+          reference_branch="${{ needs.setup-and-validate.outputs.reference_branch }}"
+
+          if [ "${test_branch}" != "" ] && [ "${reference_branch}" != "" ]; then
+            echo "### 🔄 Branch Comparison" >> $GITHUB_STEP_SUMMARY
+            echo "- **Test Branch**: \`${test_branch}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Reference Branch**: \`${reference_branch}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          total_tests="${{ needs.run-visual-tests.outputs.total_tests }}"
+          passed_tests="${{ needs.run-visual-tests.outputs.passed_tests }}"
+          failed_tests="${{ needs.run-visual-tests.outputs.failed_tests }}"
+
+          if [ "${total_tests}" != "" ] && [ "${total_tests}" != "0" ]; then
+            # Use JSON report data for detailed summary
+            if [ "${failed_tests}" -gt 0 ] 2>/dev/null; then
+              echo "## ❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "## ✅ All Tests Passed" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total Tests**: ${total_tests}" >> $GITHUB_STEP_SUMMARY
+            echo "- **✅ Passed**: ${passed_tests}" >> $GITHUB_STEP_SUMMARY
+            echo "- **❌ Failed**: ${failed_tests}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Add breakdown by page/URL
+            label_breakdown="${{ needs.run-visual-tests.outputs.label_breakdown }}"
+            if [ "${label_breakdown}" != "" ]; then
+              echo "### 🌐 Results by Page/URL" >> $GITHUB_STEP_SUMMARY
+              echo "${label_breakdown}" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Add breakdown by viewport
+            viewport_breakdown="${{ needs.run-visual-tests.outputs.viewport_breakdown }}"
+            if [ "${viewport_breakdown}" != "" ]; then
+              echo "### 📱 Results by Viewport" >> $GITHUB_STEP_SUMMARY
+              echo "${viewport_breakdown}" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Add failed test details if any
+            failed_details="${{ needs.run-visual-tests.outputs.failed_details }}"
+            if [ "${failed_tests}" -gt 0 ] 2>/dev/null && [ "${failed_details}" != "" ]; then
+              echo "### 🔍 Failed Test Details" >> $GITHUB_STEP_SUMMARY
+              echo "${failed_details}" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            # Fallback to basic XML report data
+            failures="${{ needs.run-visual-tests.outputs.failures }}"
+            total="${{ needs.run-visual-tests.outputs.total }}"
+            summary="${{ needs.run-visual-tests.outputs.summary }}"
+            
+            echo "## ${summary}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Basic Summary" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total Tests**: ${total}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Failed Tests**: ${failures}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "_Note: Detailed breakdown unavailable (JSON report not found)_" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "### 📎 Artifacts" >> $GITHUB_STEP_SUMMARY
+          # Determine artifact suffix based on trigger type
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            artifact_suffix="${{ github.event.number }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ needs.setup-and-validate.outputs.pr_number }}" != "" ]; then
+            artifact_suffix="${{ needs.setup-and-validate.outputs.pr_number }}"
+          else
+            artifact_suffix="${{ github.run_number }}"
+          fi
+
+          echo "- **backstop-results-${artifact_suffix}**: Complete test results including HTML report and screenshots" >> $GITHUB_STEP_SUMMARY
+          if [ "${failed_tests}" -gt 0 ] 2>/dev/null || [ "${failures:-0}" -gt 0 ] 2>/dev/null; then
+            echo "- **failed-screenshots-${artifact_suffix}**: Failed test screenshots for quick review" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload test results as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backstop-results-${{ (github.event_name == 'pull_request' && github.event.number) || (github.event_name == 'workflow_dispatch' && needs.setup-and-validate.outputs.pr_number != '' && needs.setup-and-validate.outputs.pr_number) || github.run_number }}
+          path: |
+            backstop_data/bitmaps_reference/
+            backstop_data/html_report/
+            backstop_data/ci_report/
+            backstop_data/json_report/
+            backstop_data/bitmaps_test/
+          retention-days: 30
+
+      - name: Upload failed test screenshots
+        uses: actions/upload-artifact@v4
+        if: needs.run-visual-tests.outputs.failures > 0
+        with:
+          name: failed-screenshots-${{ (github.event_name == 'pull_request' && github.event.number) || (github.event_name == 'workflow_dispatch' && needs.setup-and-validate.outputs.pr_number != '' && needs.setup-and-validate.outputs.pr_number) || github.run_number }}
+          path: backstop_data/bitmaps_test/**/failed_diff_*.png
+          retention-days: 7
+
+      - name: Set upload status
+        id: upload_status
+        run: |
+          echo "completed=true" >> $GITHUB_OUTPUT
+
+  update-pr:
+    runs-on: ubuntu-latest
+    needs: [setup-and-validate, run-visual-tests, generate-reports]
+    if: always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && needs.setup-and-validate.outputs.pr_number != ''))
+
+    steps:
+      - name: Comment PR with results
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const failures = '${{ needs.run-visual-tests.outputs.failures }}';
+            const total = '${{ needs.run-visual-tests.outputs.total }}';
+            const summary = '${{ needs.run-visual-tests.outputs.summary }}';
+            const backstopExitCode = '${{ needs.run-visual-tests.outputs.backstop_exit_code }}';
+            const visualTestOutcome = '${{ needs.run-visual-tests.outputs.test_outcome }}';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // Get PR number - from event for PR triggers, from input for manual triggers
+            const prNumber = '${{ github.event_name }}' === 'pull_request' ? 
+              '${{ github.event.number }}' : 
+              '${{ needs.setup-and-validate.outputs.pr_number }}';
+
+            // Get branch information
+            const testBranch = '${{ needs.setup-and-validate.outputs.test_branch }}';
+            const referenceBranch = '${{ needs.setup-and-validate.outputs.reference_branch }}';
+
+            // Get detailed JSON report data
+            const totalTests = '${{ needs.run-visual-tests.outputs.total_tests }}';
+            const passedTests = '${{ needs.run-visual-tests.outputs.passed_tests }}';
+            const failedTests = '${{ needs.run-visual-tests.outputs.failed_tests }}';
+            const labelBreakdown = `${{ needs.run-visual-tests.outputs.label_breakdown }}`;
+            const viewportBreakdown = `${{ needs.run-visual-tests.outputs.viewport_breakdown }}`;
+            const failedDetails = `${{ needs.run-visual-tests.outputs.failed_details }}`;
+
+            // Check if workflow failed before results could be properly parsed
+            const workflowFailed = visualTestOutcome === 'failure' || backstopExitCode !== '0';
+            const hasValidResults = summary && summary.trim() !== '';
+
+            let body = `## 🎨 Visual Regression Test Results\n\n`;
+
+            // Handle workflow failure cases
+            if (workflowFailed && !hasValidResults) {
+              body += `❌ **Workflow Failed**\n\n`;
+              body += `The visual regression tests could not complete successfully. This may be due to:\n`;
+              body += `- Build or setup failures\n`;
+              body += `- Network issues\n`;
+              body += `- Configuration problems\n`;
+              body += `- Missing dependencies\n\n`;
+              body += `**Next steps:**\n`;
+              body += `1. 🔄 Re-run the workflow by pushing a new commit or commenting \`/retest-visual\`\n`;
+              body += `2. 📊 [Check the workflow logs](${runUrl}) for error details\n`;
+              body += `3. 🛠️ Fix any issues found in the logs and try again\n\n`;
+            } else {
+              body += `${summary}\n\n`;
+            }
+
+            // Only show detailed results if workflow didn't fail
+            if (!workflowFailed || hasValidResults) {
+              // Add branch information if available
+              if (testBranch && referenceBranch) {
+                body += `### 🔄 Branch Comparison\n`;
+                body += `- **Test Branch**: \`${testBranch}\`\n`;
+                body += `- **Reference Branch**: \`${referenceBranch}\`\n\n`;
+              }
+
+              // Add detailed breakdown if JSON report is available
+              if (totalTests && totalTests !== '0') {
+                body += `### 📊 Detailed Test Summary\n\n`;
+                body += `- **Total Tests**: ${totalTests}\n`;
+                body += `- **✅ Passed**: ${passedTests}\n`;
+                body += `- **❌ Failed**: ${failedTests}\n\n`;
+
+                if (labelBreakdown && labelBreakdown.trim()) {
+                  body += `#### 🌐 Results by Page/URL\n${labelBreakdown}\n`;
+                }
+
+                if (viewportBreakdown && viewportBreakdown.trim()) {
+                  body += `#### 📱 Results by Viewport\n${viewportBreakdown}\n`;
+                }
+              }
+
+              if (failures > 0) {
+                body += `### ❌ Test Failures Detected\n\n`;
+                
+                if (failedDetails && failedDetails.trim()) {
+                  body += `#### 🔍 Failed Test Details\n${failedDetails}\n`;
+                }
+                
+                body += `#### What to do next:\n`;
+                body += `1. 📊 [View detailed report](${runUrl}) - Download the \`backstop-results-${prNumber}\` artifact\n`;
+                body += `2. 🔍 Review the visual differences in the HTML report\n`;
+                body += `3. 🔧 If changes are intentional, update reference screenshots\n`;
+                body += `4. 🐛 If changes are bugs, fix the styling issues\n\n`;
+                body += `#### Quick Actions:\n`;
+                body += `- [ ] Re-run visual regression tests (run ID: ${context.runId})\n`;
+                body += `- Re-run tests: Re-push to this branch or comment \`/retest-visual\`\n`;
+                body += `- Update references: Comment \`/update-visual-references\` (maintainers only)\n\n`;
+                body += `<details>\n<summary>🤖 Technical Details</summary>\n\n`;
+                body += `- **Workflow Run**: [${context.runId}](${runUrl})\n`;
+                body += `- **Commit**: ${context.sha.substring(0, 7)}\n`;
+                body += `- **Test Branch**: \`${testBranch}\`\n`;
+                body += `- **Reference Branch**: \`${referenceBranch}\`\n\n`;
+                body += `</details>`;
+              } else if (totalTests && totalTests !== '0') {
+                body += `### ✅ All Tests Passed\n\n`;
+                body += `All **${totalTests}** visual regression tests passed successfully! 🎉\n\n`;
+                body += `The visual appearance of your changes looks good and doesn't introduce any regressions.`;
+              } else {
+                body += `### ✅ All Tests Passed\n\n`;
+                body += `All **${total}** visual regression tests passed successfully! 🎉\n\n`;
+                body += `The visual appearance of your changes looks good and doesn't introduce any regressions.`;
+              }
+            }
+
+            // Add technical details for failed workflows
+            if (workflowFailed && !hasValidResults) {
+              body += `<details>\n<summary>🤖 Technical Details</summary>\n\n`;
+              body += `- **Workflow Run**: [${context.runId}](${runUrl})\n`;
+              body += `- **Commit**: ${context.sha.substring(0, 7)}\n`;
+              body += `- **Test Branch**: \`${testBranch || 'Unknown'}\`\n`;
+              body += `- **Reference Branch**: \`${referenceBranch || 'Unknown'}\`\n`;
+              body += `- **Backstop Exit Code**: \`${backstopExitCode || 'Unknown'}\`\n`;
+              body += `- **Visual Test Outcome**: \`${visualTestOutcome}\`\n\n`;
+              body += `</details>`;
+            }
+
+            // Find existing comment to update
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const existingComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🎨 Visual Regression Test Results')
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+            }
+
+      - name: Set PR status check
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const backstopExitCode = '${{ needs.run-visual-tests.outputs.backstop_exit_code }}';
+            const visualTestOutcome = '${{ needs.run-visual-tests.outputs.test_outcome }}';
+            const summary = '${{ needs.run-visual-tests.outputs.summary }}';
+
+            // Determine state based on various failure conditions
+            const workflowFailed = visualTestOutcome === 'failure' || backstopExitCode !== '0';
+            const hasValidResults = summary && summary.trim() !== '';
+
+            let state, description;
+
+            if (workflowFailed && !hasValidResults) {
+              state = 'failure';
+              description = 'Visual regression workflow failed - check logs for details';
+            } else if ('${{ needs.run-visual-tests.outputs.status }}' === 'passed') {
+              state = 'success';
+              description = summary || 'All visual regression tests passed';
+            } else {
+              state = 'failure';
+              description = summary || 'Visual regression tests failed';
+            }
+
+            // Get the correct SHA to set status on
+            let targetSha = context.sha;
+            if ('${{ github.event_name }}' === 'workflow_dispatch' && '${{ needs.setup-and-validate.outputs.pr_number }}' !== '') {
+              // For manual triggers, we need to get the PR's head SHA
+              const prNumber = '${{ needs.setup-and-validate.outputs.pr_number }}';
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              targetSha = pr.data.head.sha;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: targetSha,
+              state: state,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: description,
+              context: 'Visual Regression Tests (Multi-Job)'
+            });
+
+      - name: Post-action cleanup
+        if: always()
+        run: |
+          echo "Ensuring post-action cleanup completes..."
+          # This step ensures the workflow continues to allow post-action cleanup
+          echo "Post-actions should now execute properly"
+
+      - name: Mark test failures
+        if: needs.run-visual-tests.outputs.failures > 0
+        run: |
+          echo "::error::Visual regression tests failed. Check the artifacts for detailed results."
+          # Don't use exit 1 - let job complete so post-actions can run

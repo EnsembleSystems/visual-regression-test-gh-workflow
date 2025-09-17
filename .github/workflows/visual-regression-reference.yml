@@ -1,0 +1,135 @@
+# .github/workflows/visual-regression-reference.yml
+name: Update Visual Reference Screenshots
+
+on:
+  # Update references when main branch changes
+  push:
+    branches: [main]
+
+  # Allow manual updates
+  workflow_dispatch:
+
+  # Allow updates via PR comments
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read # Checkout code
+  issues: write # Comment on PRs
+  actions: write # Upload/manage artifacts
+  pull-requests: write # Comment on PRs
+
+jobs:
+  # Check if comment triggers reference update
+  check-comment:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issue_comment'
+    outputs:
+      should_update: ${{ steps.check.outputs.should_update }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+    steps:
+      - name: Check comment
+        id: check
+        run: |
+          comment="${{ github.event.comment.body }}"
+          if [[ "$comment" == "/update-visual-references" ]] && \
+             [[ "${{ github.event.issue.pull_request }}" != "" ]] && \
+             [[ "${{ github.event.comment.user.login }}" == "owner" || \
+                "${{ github.event.comment.author_association }}" == "OWNER" || \
+                "${{ github.event.comment.author_association }}" == "MEMBER" ]]; then
+            echo "should_update=true" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "should_update=false" >> $GITHUB_OUTPUT
+          fi
+
+  update-references:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.check-comment.outputs.should_update == 'true'
+    needs: check-comment
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # For PR comments, checkout the PR branch
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', needs.check-comment.outputs.pr_number) || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies & Playwright browsers
+        run: npm ci --ignore-scripts && npm run postinstall
+
+      - name: Create reference screenshots
+        run: npm run backstop:reference
+
+      - name: Upload reference screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: backstop-reference
+          path: backstop_data/bitmaps_reference/
+          retention-days: 90
+          overwrite: true
+
+      - name: Comment on PR if triggered by comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.check-comment.outputs.pr_number }},
+              body: '✅ Visual reference screenshots have been updated! Re-run the visual regression tests to see the new baseline.'
+            });
+
+  # Clean up old artifacts
+  cleanup-old-artifacts:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      actions: write # Required to delete artifacts
+    steps:
+      - name: Delete old test result artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const artifacts = await github.rest.actions.listArtifactsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              });
+              
+              const cutoffDate = new Date();
+              cutoffDate.setDate(cutoffDate.getDate() - 7); // Keep artifacts for 7 days
+              
+              let deletedCount = 0;
+              for (const artifact of artifacts.data.artifacts) {
+                if (artifact.name.startsWith('backstop-results-') || 
+                    artifact.name.startsWith('failed-screenshots-')) {
+                  const createdAt = new Date(artifact.created_at);
+                  if (createdAt < cutoffDate) {
+                    try {
+                      console.log(`Deleting old artifact: ${artifact.name}`);
+                      await github.rest.actions.deleteArtifact({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        artifact_id: artifact.id
+                      });
+                      deletedCount++;
+                    } catch (error) {
+                      console.log(`Failed to delete artifact ${artifact.name}: ${error.message}`);
+                    }
+                  }
+                }
+              }
+              console.log(`Cleanup completed. Deleted ${deletedCount} old artifacts.`);
+            } catch (error) {
+              console.log(`Artifact cleanup failed: ${error.message}`);
+              // Don't fail the job if cleanup fails
+            }

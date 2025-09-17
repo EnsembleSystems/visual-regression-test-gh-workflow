@@ -1,0 +1,58 @@
+{
+  "cookies": [
+    {
+      "domain": ".www.yourdomain.com",
+      "path": "/",
+      "name": "yourCookieName",
+      "value": "yourCookieValue",
+      "expirationDate": 1798790400,
+      "hostOnly": false,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "sameSite": "Lax"
+    },
+    {
+      "domain": ".main--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "path": "/",
+      "name": "hide-banner",
+      "value": "true",
+      "hostOnly": false,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "sameSite": "Lax"
+    },
+    {
+      "domain": ".stage--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "path": "/",
+      "name": "hide-banner",
+      "value": "true",
+      "hostOnly": false,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "localStorage": [
+        {
+          "name": "indexToUse",
+          "value": "prod_RF_SITE"
+        }
+      ]
+    },
+    {
+      "origin": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "localStorage": [
+        {
+          "name": "indexToUse",
+          "value": "prod_RF_SITE"
+        }
+      ]
+    }
+  ]
+}

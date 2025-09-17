@@ -1,0 +1,227 @@
+{
+  "id": "visual_regression_test",
+  "viewports": [
+    {
+      "label": "phone",
+      "width": 375,
+      "height": 667
+    },
+    {
+      "label": "tablet",
+      "width": 768,
+      "height": 1024
+    },
+    {
+      "label": "desktop",
+      "width": 1920,
+      "height": 1080
+    }
+  ],
+  "onBeforeScript": "playwright/onBefore.js",
+  "onReadyScript": "playwright/onReady.js",
+  "scenarios": [
+    {
+      "label": "Home Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Contact Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/contact",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/contact",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Platform Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/platform",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/platform",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Platform Intelligence Graph Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/platform/intelligence-graph",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/platform/intelligence-graph",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Products Threat Intelligence Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/products/threat-intelligence",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/products/threat-intelligence",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Services Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/services",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/services",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Services Managed Monitoring Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/services/managed-monitoring",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/services/managed-monitoring",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Research Insikt Group Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/research/insikt-group",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/research/insikt-group",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Resources Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/resources",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/resources",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Blog Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/blog?page=1",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/blog?page=1",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Blog Post Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/blog/the-future-of-cyber-defense-is-autonomous-coming-predict-2025",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/blog/the-future-of-cyber-defense-is-autonomous-coming-predict-2025",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Integration Landing Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/integrations",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/integrations",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    },
+    {
+      "label": "Integration Detail Page",
+      "url": "https://stage--2025recordedfuturewebsite--recorded-future-website.aem.live/integrations/splunk",
+      "referenceUrl": "https://main--2025recordedfuturewebsite--recorded-future-website.aem.live/integrations/splunk",
+      "hideSelectors": [
+        ".cookie-banner",
+        ".loading-spinner",
+        "[data-testid=\"timestamp\"]",
+        ".logo-garden"
+      ],
+      "removeSelectors": [".advertisement", ".chat-widget", ".embed-wrapper"],
+      "misMatchThreshold": 0.2
+    }
+  ],
+  "paths": {
+    "bitmaps_reference": "backstop_data/bitmaps_reference",
+    "bitmaps_test": "backstop_data/bitmaps_test",
+    "engine_scripts": "backstop_data/engine_scripts",
+    "html_report": "backstop_data/html_report",
+    "ci_report": "backstop_data/ci_report"
+  },
+  "report": ["browser", "CI", "json"],
+  "engine": "playwright",
+  "engineOptions": {
+    "args": [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-web-security",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-ipc-flooding-protection"
+    ],
+    "browser": "chromium",
+    "storageState": "backstop_data/engine_scripts/cookies.json",
+    "timeout": 30000,
+    "headless": true
+  },
+  "readyEvent": null,
+  "readySelector": null,
+  "readyTimeout": 30000,
+  "asyncCaptureLimit": 3,
+  "asyncCompareLimit": 50,
+  "debug": false,
+  "debugWindow": false,
+  "delay": 3000
+}
